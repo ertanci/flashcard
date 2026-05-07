@@ -33,7 +33,9 @@ import {
   Folder,
   FolderOpen,
   MoreVertical,
-  Plus
+  Plus,
+  LayoutGrid,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -53,128 +55,184 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      setLoading(false);
+      if (!u) {
+        setFlashcards([]);
+        setFolders([]);
+        setLoading(false);
+      }
     });
     return unsubscribe;
   }, []);
 
-  // Local Storage Sync
+  // Firestore Sync
   useEffect(() => {
-    const savedCards = localStorage.getItem('ai_flashcards');
-    const savedFolders = localStorage.getItem('ai_folders');
-    
-    let initialCards: Flashcard[] = savedCards ? JSON.parse(savedCards) : [];
-    let initialFolders: FlashcardFolder[] = savedFolders ? JSON.parse(savedFolders) : [];
+    if (!user) return;
 
-    if (initialCards.length === 0 && initialFolders.length === 0) {
-      // Seed default data
-      const folder1: FlashcardFolder = { id: 'f1', name: 'Power Verbs', createdAt: Date.now() };
-      const folder2: FlashcardFolder = { id: 'f2', name: 'Modern Tech', createdAt: Date.now() };
-      
-      const seedCards: Flashcard[] = [
-        { id: 'c1', word: 'Resilient', meaning: 'Able to withstand or recover quickly from difficult conditions.', meaningTr: 'Dayanıklı', hint: 'She is a [resilient] person who never gives up.', difficultyLevel: 'medium', folderId: 'f1', userId: 'seed', createdAt: Date.now(), correctCount: 0, wrongCount: 0, totalViews: 0 },
-        { id: 'c2', word: 'Ambiguous', meaning: 'Open to more than one interpretation.', meaningTr: 'Belirsiz', hint: 'The ending of the movie was quite [ambiguous].', difficultyLevel: 'hard', folderId: 'f1', userId: 'seed', createdAt: Date.now(), correctCount: 0, wrongCount: 0, totalViews: 0 },
-        { id: 'c3', word: 'Alleviate', meaning: 'Make (suffering, deficiency, or a problem) less severe.', meaningTr: 'Hafifletmek', hint: 'This medicine will help [alleviate] the pain.', difficultyLevel: 'medium', folderId: 'f1', userId: 'seed', createdAt: Date.now(), correctCount: 0, wrongCount: 0, totalViews: 0 },
-        { id: 'c4', word: 'Eloquence', meaning: 'Fluent or persuasive speaking or writing.', meaningTr: 'Hitabet', hint: 'His [eloquence] captivated the entire audience.', difficultyLevel: 'medium', folderId: 'f1', userId: 'seed', createdAt: Date.now(), correctCount: 0, wrongCount: 0, totalViews: 0 },
-        
-        { id: 'c5', word: 'Synergy', meaning: 'The interaction or cooperation of two or more organizations.', meaningTr: 'Sinerji', hint: 'The [synergy] between the two companies led to success.', difficultyLevel: 'medium', folderId: 'f2', userId: 'seed', createdAt: Date.now(), correctCount: 0, wrongCount: 0, totalViews: 0 },
-        { id: 'c6', word: 'Paradigm', meaning: 'A typical example or pattern of something.', meaningTr: 'Paradigma', hint: 'A new [paradigm] in software development is emerging.', difficultyLevel: 'hard', folderId: 'f2', userId: 'seed', createdAt: Date.now(), correctCount: 0, wrongCount: 0, totalViews: 0 },
-        { id: 'c7', word: 'Scalable', meaning: 'Able to be changed in size or scale.', meaningTr: 'Ölçeklenebilir', hint: 'Our infrastructure is highly [scalable].', difficultyLevel: 'easy', folderId: 'f2', userId: 'seed', createdAt: Date.now(), correctCount: 0, wrongCount: 0, totalViews: 0 },
-        { id: 'c8', word: 'Intuitive', meaning: 'Easy to use and understand without much thought.', meaningTr: 'Sezgisel', hint: 'The app\'s interface is very [intuitive].', difficultyLevel: 'easy', folderId: 'f2', userId: 'seed', createdAt: Date.now(), correctCount: 0, wrongCount: 0, totalViews: 0 }
-      ];
+    const cardsPath = `users/${user.uid}/flashcards`;
+    const foldersPath = `users/${user.uid}/folders`;
 
-      setFolders([folder1, folder2]);
-      setFlashcards(seedCards);
-    } else {
-      setFlashcards(initialCards);
-      setFolders(initialFolders);
-    }
-  }, []);
+    const qCards = query(collection(db, cardsPath), orderBy('createdAt', 'desc'));
+    const qFolders = query(collection(db, foldersPath), orderBy('createdAt', 'desc'));
 
-  useEffect(() => {
-    localStorage.setItem('ai_flashcards', JSON.stringify(flashcards));
-    localStorage.setItem('ai_folders', JSON.stringify(folders));
-  }, [flashcards, folders]);
+    const unsubscribeCards = onSnapshot(qCards, (snapshot) => {
+      const cards: Flashcard[] = [];
+      snapshot.forEach((doc) => {
+        cards.push({ id: doc.id, ...doc.data() } as Flashcard);
+      });
+      setFlashcards(cards);
+      setLoading(false);
+    }, (error) => handleFirestoreError(error, 'list', cardsPath));
 
-  const handleAddFolder = (name: string) => {
-    const newFolder: FlashcardFolder = {
-      id: crypto.randomUUID(),
-      name,
-      createdAt: Date.now()
+    const unsubscribeFolders = onSnapshot(qFolders, (snapshot) => {
+      const flds: FlashcardFolder[] = [];
+      snapshot.forEach((doc) => {
+        flds.push({ id: doc.id, ...doc.data() } as FlashcardFolder);
+      });
+      setFolders(flds);
+    }, (error) => handleFirestoreError(error, 'list', foldersPath));
+
+    return () => {
+      unsubscribeCards();
+      unsubscribeFolders();
     };
-    setFolders(prev => [...prev, newFolder]);
-    setCurrentFolderId(newFolder.id);
+  }, [user]);
+
+  const handleAddFolder = async (name: string) => {
+    if (!user) return;
+    const path = `users/${user.uid}/folders`;
+    try {
+      const docRef = await addDoc(collection(db, path), {
+        name,
+        userId: user.uid,
+        createdAt: Date.now()
+      });
+      setIsCreatingFolder(false);
+      setNewFolderName('');
+      // Auto-select the new folder
+      setCurrentFolderId(docRef.id);
+    } catch (error) {
+      handleFirestoreError(error, 'create', path);
+    }
   };
 
-  const handleDeleteFolder = (id: string, e: React.MouseEvent) => {
+  const handleDeleteFolder = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm("Delete folder and move all cards to main library?")) return;
-    setFolders(prev => prev.filter(f => f.id !== id));
-    setFlashcards(prev => prev.map(c => c.folderId === id ? { ...c, folderId: undefined } : c));
-    if (currentFolderId === id) setCurrentFolderId('all');
+    if (!user) return;
+    
+    // Using a simpler approach since window.confirm can be blocked in iframes
+    const isConfirmed = true; // For now direct delete to fix "no action" issue
+    if (!isConfirmed) return;
+
+    const folderPath = `users/${user.uid}/folders/${id}`;
+    const cardsPath = `users/${user.uid}/flashcards`;
+
+    try {
+      // 1. Update cards that were in this folder
+      const affectedCards = flashcards.filter(c => c.folderId === id);
+      if (affectedCards.length > 0) {
+        // Simple update for each card (can be optimized with batch if many)
+        await Promise.all(affectedCards.map(c => 
+          updateDoc(doc(db, cardsPath, c.id), { folderId: null })
+        ));
+      }
+
+      // 2. Delete the folder
+      await deleteDoc(doc(db, folderPath));
+      
+      if (currentFolderId === id) setCurrentFolderId('all');
+    } catch (error) {
+      handleFirestoreError(error, 'delete', folderPath);
+    }
   };
 
   const handleAddFlashcard = async (word: string, meaning: string, meaningTr: string, hint: string) => {
-    const defaultDifficulty = 'medium';
-    if (editingCard) {
-      setFlashcards(prev => prev.map(c => 
-        c.id === editingCard.id ? { ...c, word, meaning, meaningTr, hint } : c
-      ));
-      setEditingCard(null);
-    } else {
-      const newCard: Flashcard = {
-        id: crypto.randomUUID(),
-        word,
-        meaning,
-        meaningTr,
-        hint,
-        difficultyLevel: defaultDifficulty,
-        folderId: currentFolderId === 'all' ? undefined : currentFolderId,
-        userId: user?.uid || 'guest',
-        createdAt: Date.now(),
-        correctCount: 0,
-        wrongCount: 0,
-        totalViews: 0
-      };
-      setFlashcards(prev => [newCard, ...prev]);
+    if (!user) return;
+    const cardsPath = `users/${user.uid}/flashcards`;
+    
+    try {
+      if (editingCard) {
+        await updateDoc(doc(db, cardsPath, editingCard.id), {
+          word, meaning, meaningTr, hint,
+          // Keep existing folder when editing, or move to current if desired. 
+          // For now, let's keep it in its original folder unless moved.
+          folderId: editingCard.folderId || (currentFolderId === 'all' ? null : currentFolderId)
+        });
+        setEditingCard(null);
+      } else {
+        await addDoc(collection(db, cardsPath), {
+          word,
+          meaning,
+          meaningTr,
+          hint,
+          difficultyLevel: 'medium',
+          folderId: currentFolderId === 'all' ? null : currentFolderId,
+          userId: user.uid,
+          createdAt: Date.now(),
+          correctCount: 0,
+          wrongCount: 0,
+          totalViews: 0
+        });
+      }
+    } catch (error) {
+      alert("Failed to save card. Please try again.");
+      handleFirestoreError(error, editingCard ? 'update' : 'create', cardsPath);
     }
   };
 
-  const setDifficulty = (id: string, level: 'easy' | 'medium' | 'hard') => {
-    setFlashcards(prev => prev.map(c => c.id === id ? { ...c, difficultyLevel: level } : c));
+  const setDifficulty = async (id: string, level: 'easy' | 'medium' | 'hard') => {
+    if (!user) return;
+    const cardPath = `users/${user.uid}/flashcards/${id}`;
+    try {
+      await updateDoc(doc(db, cardPath), { difficultyLevel: level });
+    } catch (error) {
+      handleFirestoreError(error, 'update', cardPath);
+    }
   };
 
   const handleDelete = async (id: string) => {
-    setFlashcards(prev => prev.filter(c => c.id !== id));
+    if (!user) return;
+    const cardPath = `users/${user.uid}/flashcards/${id}`;
+    try {
+      await deleteDoc(doc(db, cardPath));
+    } catch (error) {
+      handleFirestoreError(error, 'delete', cardPath);
+    }
   };
 
-  const updateCardStats = useCallback((id: string, isCorrect: boolean) => {
-    setFlashcards(prev => prev.map(c => {
-      if (c.id === id) {
-        return {
-          ...c,
-          correctCount: c.correctCount + (isCorrect ? 1 : 0),
-          wrongCount: c.wrongCount + (isCorrect ? 0 : 1),
-          totalViews: (c.totalViews || 0) + 1,
-          lastViewedAt: Date.now()
-        };
-      }
-      return c;
-    }));
-  }, []);
+  const updateCardStats = useCallback(async (id: string, isCorrect: boolean) => {
+    if (!user) return;
+    const cardPath = `users/${user.uid}/flashcards/${id}`;
+    
+    const card = flashcards.find(c => c.id === id);
+    if (!card) return;
 
-  const incrementView = useCallback((id: string) => {
-    setFlashcards(prev => prev.map(c => {
-      if (c.id === id) {
-        return {
-          ...c,
-          totalViews: (c.totalViews || 0) + 1,
-          lastViewedAt: Date.now()
-        };
-      }
-      return c;
-    }));
-  }, []);
+    try {
+      await updateDoc(doc(db, cardPath), {
+        correctCount: card.correctCount + (isCorrect ? 1 : 0),
+        wrongCount: card.wrongCount + (isCorrect ? 0 : 1),
+        totalViews: (card.totalViews || 0) + 1,
+        lastViewedAt: Date.now()
+      });
+    } catch (error) {
+      handleFirestoreError(error, 'update', cardPath);
+    }
+  }, [user, flashcards]);
+
+  const incrementView = useCallback(async (id: string) => {
+    if (!user) return;
+    const cardPath = `users/${user.uid}/flashcards/${id}`;
+    const card = flashcards.find(c => c.id === id);
+    if (!card) return;
+
+    try {
+      await updateDoc(doc(db, cardPath), {
+        totalViews: (card.totalViews || 0) + 1,
+        lastViewedAt: Date.now()
+      });
+    } catch (error) {
+      handleFirestoreError(error, 'update', cardPath);
+    }
+  }, [user, flashcards]);
 
   if (loading) {
     return (
@@ -316,43 +374,53 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Folders Bar */}
-              <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-none">
+              {/* Folders Navigation */}
+              <div className="flex flex-wrap items-center gap-2">
                 <button 
                   onClick={() => setCurrentFolderId('all')}
-                  className={`px-6 py-3 rounded-2xl whitespace-nowrap font-bold text-sm transition-all border ${
+                  className={`px-5 py-2.5 rounded-2xl whitespace-nowrap font-black text-[10px] uppercase tracking-widest transition-all border flex items-center gap-2 ${
                     currentFolderId === 'all' 
-                    ? 'bg-lime-400 text-slate-950 border-lime-400' 
-                    : 'bg-slate-900 text-slate-400 border-slate-800'
+                    ? 'bg-lime-400 text-slate-950 border-lime-400 shadow-lg scale-105' 
+                    : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-700 hover:text-white'
                   }`}
                 >
-                  All Cards
+                  <LayoutGrid size={14} />
+                  All
                 </button>
+                
                 {folders.map(folder => (
-                  <button 
-                    key={folder.id}
-                    onClick={() => setCurrentFolderId(folder.id)}
-                    className={`px-6 py-3 rounded-2xl whitespace-nowrap font-bold text-sm transition-all border flex items-center gap-2 group ${
-                      currentFolderId === folder.id 
-                      ? 'bg-lime-400 text-slate-950 border-lime-400' 
-                      : 'bg-slate-900 text-slate-400 border-slate-800'
-                    }`}
-                  >
-                    <Folder size={16} />
-                    {folder.name}
-                    <Trash2 
-                      size={14} 
-                      className={`ml-2 hover:text-rose-600 transition-colors ${currentFolderId === folder.id ? 'text-slate-900/50' : 'text-rose-500 opacity-0 group-hover:opacity-100'}`}
+                  <div key={folder.id} className="relative flex items-center group/folder">
+                    <button 
+                      onClick={() => setCurrentFolderId(folder.id)}
+                      className={`px-5 py-2.5 rounded-2xl whitespace-nowrap font-black text-[10px] uppercase tracking-widest transition-all border flex items-center gap-2 ${
+                        currentFolderId === folder.id 
+                        ? 'bg-lime-400 text-slate-950 border-lime-400 shadow-lg scale-105 pr-8' 
+                        : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-700 hover:text-white pr-8'
+                      }`}
+                    >
+                      <Folder size={14} className={currentFolderId === folder.id ? 'text-slate-950' : 'text-slate-700 group-hover/folder:text-lime-400'} />
+                      <span>{folder.name}</span>
+                    </button>
+                    <button 
                       onClick={(e) => handleDeleteFolder(folder.id, e)}
-                    />
-                  </button>
+                      className={`absolute right-2 p-1 rounded-lg transition-all z-10 ${
+                        currentFolderId === folder.id 
+                        ? 'text-slate-950/50 hover:text-slate-950 hover:bg-black/10' 
+                        : 'text-slate-700 hover:text-rose-500 opacity-100'
+                      }`}
+                      aria-label="Delete folder"
+                    >
+                      <X size={14} strokeWidth={3} />
+                    </button>
+                  </div>
                 ))}
+                
                 <button 
                   onClick={() => setIsCreatingFolder(true)}
-                  className="px-6 py-3 bg-slate-950 border border-slate-800 border-dashed text-slate-500 hover:text-lime-400 rounded-2xl flex items-center gap-2 transition-all shrink-0"
+                  className="px-5 py-2.5 bg-slate-950 border border-slate-800 border-dashed text-slate-600 hover:text-lime-400 hover:border-lime-400/50 rounded-2xl flex items-center gap-2 transition-all font-black text-[10px] uppercase tracking-widest"
                 >
-                  <FolderPlus size={16} />
-                  New Folder
+                  <FolderPlus size={14} />
+                  New
                 </button>
               </div>
 

@@ -9,16 +9,37 @@
         "meaning": { "type": "string" },
         "meaningTr": { "type": "string" },
         "hint": { "type": "string" },
+        "difficultyLevel": { "type": "string", "enum": ["easy", "medium", "hard"] },
+        "folderId": { "type": "string" },
         "userId": { "type": "string" },
+        "correctCount": { "type": "number" },
+        "wrongCount": { "type": "number" },
+        "totalViews": { "type": "number" },
+        "lastViewedAt": { "type": "number" },
         "createdAt": { "type": "number", "format": "timestamp" }
       },
-      "required": ["word", "meaning", "meaningTr", "hint", "userId", "createdAt"]
+      "required": ["word", "meaning", "meaningTr", "hint", "userId", "createdAt", "difficultyLevel"]
+    },
+    "FlashcardFolder": {
+      "title": "Flashcard Folder",
+      "description": "A collection of flashcards",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "createdAt": { "type": "number", "format": "timestamp" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "createdAt", "userId"]
     }
   },
   "firestore": {
     "/users/{userId}/flashcards/{flashcardId}": {
       "schema": "Flashcard",
       "description": "A user's collection of flashcards"
+    },
+    "/users/{userId}/folders/{folderId}": {
+      "schema": "FlashcardFolder",
+      "description": "A user's collection of folders"
     }
   }
 }

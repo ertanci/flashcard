@@ -18,6 +18,16 @@
   --animate-spin-slow: spin-slow 8s linear infinite;
 }
 
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
 @layer base {
   body {
     @apply bg-slate-950 text-stone-100 antialiased;

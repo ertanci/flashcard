@@ -2,6 +2,7 @@
 export interface FlashcardFolder {
   id: string;
   name: string;
+  userId: string;
   createdAt: number;
 }
 

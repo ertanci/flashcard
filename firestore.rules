@@ -1,12 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny
+    // 0. Global Safety Net
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Common helpers
+    // --- Helper Functions ---
     function isSignedIn() {
       return request.auth != null;
     }
@@ -16,34 +16,78 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() <= 128;
     }
 
-    // Flashcard validation
-    function isValidFlashcard(data) {
-      return data.word is string && data.word.size() > 0 && data.word.size() <= 500 &&
-             data.meaning is string && data.meaning.size() > 0 && data.meaning.size() <= 2000 &&
-             data.meaningTr is string && data.meaningTr.size() > 0 && data.meaningTr.size() <= 2000 &&
-             data.hint is string && data.hint.size() <= 1000 &&
-             data.userId == request.auth.uid &&
-             data.createdAt is number;
+    function incoming() {
+      return request.resource.data;
     }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidFlashcardSchema(data) {
+      return (data.word is string && data.word.size() <= 200)
+        && (data.meaning is string && data.meaning.size() <= 1000)
+        && (data.meaningTr is string && data.meaningTr.size() <= 500)
+        && (data.hint is string && data.hint.size() <= 500)
+        && (data.userId is string && data.userId == request.auth.uid)
+        && (data.createdAt is number)
+        && (data.difficultyLevel in ['easy', 'medium', 'hard'])
+        && (data.correctCount is number)
+        && (data.wrongCount is number)
+        && (data.totalViews is number)
+        && (data.folderId == null || (data.folderId is string && data.folderId.size() <= 128))
+        && (!data.keys().contains('lastViewedAt') || data.lastViewedAt is number);
+    }
+
+    function isValidFolder(data) {
+      return data.name is string && data.name.size() <= 100
+        && data.userId is string && data.userId == request.auth.uid
+        && data.createdAt is number;
+    }
+
+    // --- Collection Routes ---
 
     match /users/{userId} {
       allow read: if isOwner(userId);
+      
+      match /folders/{folderId} {
+        allow list, get: if isOwner(userId);
+        
+        allow create: if isOwner(userId) 
+          && isValidFolder(incoming());
+          
+        allow update: if isOwner(userId)
+          && isValidFolder(incoming())
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt;
+          
+        allow delete: if isOwner(userId);
+      }
 
       match /flashcards/{flashcardId} {
-        allow read: if isOwner(userId);
+        allow list, get: if isOwner(userId);
         
-        allow create: if isOwner(userId) && 
-                         isValidId(flashcardId) && 
-                         isValidFlashcard(request.resource.data);
-                         
-        allow update: if isOwner(userId) && 
-                         isValidFlashcard(request.resource.data) &&
-                         request.resource.data.userId == resource.data.userId &&
-                         request.resource.data.createdAt == resource.data.createdAt;
-                         
+        allow create: if isOwner(userId) 
+          && isValidFlashcardSchema(incoming());
+          
+        allow update: if isOwner(userId)
+          && isValidFlashcardSchema(incoming())
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && (
+            // Core Action: Edit content
+            incoming().diff(existing()).affectedKeys().hasOnly(['word', 'meaning', 'meaningTr', 'hint', 'folderId', 'difficultyLevel'])
+            || 
+            // Stats Action: Update stats
+            incoming().diff(existing()).affectedKeys().hasOnly(['correctCount', 'wrongCount', 'totalViews', 'lastViewedAt'])
+            ||
+            // Difficulty Action: Update difficulty
+            incoming().diff(existing()).affectedKeys().hasOnly(['difficultyLevel', 'correctCount', 'wrongCount', 'totalViews', 'lastViewedAt'])
+          );
+          
         allow delete: if isOwner(userId);
       }
     }
